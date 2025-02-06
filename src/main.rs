@@ -1,282 +1,234 @@
-use core::fmt;
-use std::env;
-use std::fs::File;
-use std::io::{read_to_string, Write};
-use std::path::{self, PathBuf};
-use std::process::exit;
-use std::str::FromStr;
-
+use clap::{Parser, ValueEnum};
+use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+// use serde_json::json;
+use regex::Regex;
+use std::collections::HashMap;
+use std::env;
+use std::error::Error;
+use std::fmt;
+use std::fs;
+use tokio;
+const USER_AGENT_NAME: &str = "version-updater";
+const DEFAULT_VERSION_FILTER: &str = "(.*)";
 
-use reqwest::blocking::Client;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
-
-const GITHUB_BASE_API_URL: &str = "https://api.github.com/repos";
-const GITHUB_LATEST_RELEASE_ENDPOINT: &str = "releases/latest";
-const GITLAB_BASE_URL: &str = "https://gitlab.com";
-const GITLAB_LATEST_RELEASE_ENDPOINT: &str = "releases/permalink/latest";
-
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("http client error {0}")]
-    HttpClientError(String),
-    #[error("http server error {0}")]
-    HttpServerError(String),
-    #[error("http error {0}")]
-    HttpReqwestError(String),
-    #[error("Failed to serialze release result {0}")]
-    SerializeError(String),
-    #[error("Unkown repo type {0}")]
-    UnknownRepoType(String),
+fn default_version_filter() -> String {
+    DEFAULT_VERSION_FILTER.to_string()
 }
 
-#[derive(Serialize, Deserialize)]
-struct ReleaseInfo {
-    version: String,
-    url: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct GitHubReleaseInfo {
-    name: String,
-    html_url: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct GitLabReleaseInfo {
-    tag_name: String,
-    #[serde(rename = "_links")]
-    links: Links,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Links {
-    #[serde(rename = "self")]
-    url: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-enum RepoType {
-    GitLab,
-    GitHub,
-}
-impl fmt::Display for RepoType {
+impl fmt::Display for GitConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RepoType::GitHub => write!(f, "GitHub"),
-            RepoType::GitLab => write!(f, "GitLab"),
+        match &self.project_id {
+            Some(id) => write!(f, "{}", id),
+            None => write!(f, "{}", self.repo),
         }
     }
 }
 
-// Example file content could look this way:
-// - name: Wallabag
-//   repo: wallabag/wallabag
-//   repo_type: GitHub
-//   project_id: null
-//   version: 2.6.10
-//   auth: true
-// - name: Comentario
-//   repo: comentario/comentario
-//   repo_type: GitLab
-//   project_id: '42486427'
-//   version: v3.11.0
-//   auth: null
-
-/// TODO
-// # // TODO: docker check
-// # // check_image: true
-// # // image_path: bla/blubb
-// # // image_auth: true
-// # // image_version_regex: "^123$"
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Services {
-    name: String,
+#[derive(Debug, Serialize, Deserialize)]
+struct GitConfig {
     repo: String,
-    repo_type: RepoType,
-    project_id: Option<String>,
-    version: String,
-    auth: Option<bool>,
-    image_check: Option<ImageCheck>,
+    #[serde(rename = "type")]
+    git_type: GitType,
+    #[serde(default)] // This makes it optional in the serialized form
+    project_id: Option<u64>,
+    #[serde(default = "default_version_filter", rename = "version_filter")]
+    filter: String,
+    #[serde(default)]
+    private: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ImageCheck {
-    enable_check: Option<bool>,
-    auth: Option<bool>,
-    reg_path: Option<String>,
-    version_rebex: Option<String>,
-}
-
-struct VersionFileUpdater {
-    file_name: PathBuf,
-}
-
-impl VersionFileUpdater {
-    fn new(file: String) -> Self {
-        let file_path =
-            path::PathBuf::from_str(file.as_str()).expect("Expected a path to a version file.");
-        VersionFileUpdater {
-            file_name: file_path,
+impl GitConfig {
+    // Validation method
+    pub fn validate(&self) -> Result<(), String> {
+        if self.git_type == GitType::Gitlab && self.project_id.is_none() {
+            return Err("project_id is required when git type is gitlab".to_string());
         }
+        Ok(())
     }
-    fn load_file(&self) -> Vec<Services> {
-        let mut file = File::open(&self.file_name).expect("Unable to open file");
-        let contents = read_to_string(&mut file).expect("Unable to read file");
+}
 
-        let services: Vec<Services> =
-            serde_yaml::from_str(&contents).expect("Could not load content into YAML");
-        services
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum GitType {
+    Github,
+    Gitlab,
+    None,
+}
+#[derive(Debug, Serialize, Deserialize)]
+struct ImageConfig {
+    registry: String,
+    tag: String,
+    #[serde(default)]
+    private: bool,
+}
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Output format
+    #[arg(short, long, value_enum, default_value_t = OutputFormat::Json)]
+    format: OutputFormat,
+
+    /// Config file path
+    #[arg(short, long, default_value = "config.yaml")]
+    config: String,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+enum OutputFormat {
+    Json,
+    Yaml,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Config {
+    #[serde(flatten)]
+    services: HashMap<String, ServiceConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ServiceConfig {
+    git: GitConfig,
+    image: ImageConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OutputData {
+    version: HashMap<String, ServiceInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ServiceInfo {
+    container_image: String,
+    image_tag: String,
+}
+async fn check_registry_image(
+    registry: &str,
+    tag_pattern: &str,
+) -> Result<(String, String), Box<dyn Error>> {
+    // This is a placeholder - implement actual registry checking logic
+    Ok((registry.to_string(), tag_pattern.to_string()))
+}
+
+async fn get_github_version(
+    repo: &str,
+    token: Option<String>,
+    filter: String,
+) -> Result<String, Box<dyn Error>> {
+    let client = reqwest::Client::new();
+    let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+    let mut request = client.get(url).header(USER_AGENT, USER_AGENT_NAME);
+
+    if let Some(token) = token {
+        request = request.header(AUTHORIZATION, format!("Bearer {}", token));
     }
 
-    fn update_versions(&self, http_client: &Client) -> Vec<Services> {
-        let mut updated_service = false;
-        let mut repos = self.load_file();
-        for service in repos.iter_mut() {
-            let project_ref: String = match service.repo_type {
-                RepoType::GitHub => service.repo.clone(),
-                RepoType::GitLab => service.project_id.clone().unwrap(),
-            };
-            let result =
-                match get_release_info(http_client, service.repo_type, project_ref, service.auth) {
-                    Ok(res) => res,
-                    Err(e) => {
-                        println!("error occured: {}", e);
-                        exit(1)
-                    }
-                };
-            let old_version = service.version.clone();
-            if old_version != result.version.clone() {
-                service.version = result.version.clone();
-                updated_service = true;
-                print_version(service.clone(), result, old_version);
+    let response = request.send().await?;
+    let body = response.text().await?;
+    let data: serde_json::Value = serde_json::from_str(&body)?;
+    let tag_name = data["tag_name"].as_str().unwrap_or("");
+
+    let version_pattern = format!("{}", filter); // Just use the filter directly
+    let re = Regex::new(&version_pattern).unwrap();
+    let version = re
+        .captures(tag_name)
+        .and_then(|cap| cap.get(1))
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    Ok(version)
+}
+
+async fn get_gitlab_version(repo: u64, token: Option<String>) -> Result<String, Box<dyn Error>> {
+    let client = reqwest::Client::new();
+    let url = format!(
+        "https://gitlab.com/api/v4/projects/{}/releases/permalink/latest",
+        repo
+    );
+    let mut request = client.get(url).header(USER_AGENT, USER_AGENT_NAME);
+
+    if let Some(token) = token {
+        request = request.header("PRIVATE-TOKEN", format!("{}", token));
+    }
+
+    let response = request.send().await?;
+    let body = response.text().await?;
+    let data: serde_json::Value = serde_json::from_str(&body)?;
+    println!("{:?}", data);
+    Ok(data["tag_name"].as_str().unwrap_or("").to_string())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+
+    let config_content = fs::read_to_string(&args.config)?;
+    let config_file: Config = serde_yaml::from_str(&config_content)?;
+
+    let mut output = OutputData {
+        version: HashMap::new(),
+    };
+
+    // Process each service in the config
+    for (service_name, service_config) in config_file.services {
+        if let Err(e) = service_config.git.validate() {
+            return Err(format!(
+                "Invalid configuration for service '{}': {}",
+                service_name, e
+            )
+            .into());
+        }
+        // Get version from git if configured
+        let version = match service_config.git.git_type {
+            GitType::Github => {
+                get_github_version(
+                    &service_config.git.repo,
+                    if service_config.git.private {
+                        env::var("GITHUB_TOKEN").ok()
+                    } else {
+                        None
+                    },
+                    service_config.git.filter,
+                )
+                .await?
             }
-        }
-        if !updated_service {
-            println!("No new versions for services available.");
-        }
-        repos
-    }
-    fn update_file(&self, repos: Vec<Services>) {
-        let mut file = File::create(&self.file_name).expect("Unable to open file");
-        let s = serde_yaml::to_string(&repos).expect("Not valid yaml");
-        match file.write_all(&s.into_bytes()) {
-            Ok(..) => {}
-            Err(e) => println!("{}", e),
+            GitType::Gitlab => {
+                get_gitlab_version(
+                    service_config.git.project_id.unwrap(),
+                    if service_config.git.private {
+                        env::var("GITLAB_TOKEN").ok()
+                    } else {
+                        None
+                    },
+                )
+                .await?
+            }
+            GitType::None => String::new(),
         };
+        println!("{}", version);
+
+        // Check registry image
+        let (container_image, mut image_tag) =
+            check_registry_image(&service_config.image.registry, &service_config.image.tag).await?;
+
+        // Replace ${RELEASE_VERSION} placeholder if present
+        image_tag = image_tag.replace("${RELEASE_VERSION}", &version);
+
+        // Add to output
+        output.version.insert(
+            service_name,
+            ServiceInfo {
+                container_image,
+                image_tag,
+            },
+        );
     }
-}
 
-fn print_version(service: Services, result: ReleaseInfo, old_version: String) {
-    println!(
-        "===============\n\
-        {} repo {} for service {}\n\
-        Old version was: {}.\n\
-        New version is {}.\n\
-        Release information can be found here {}",
-        service.repo_type, service.repo, service.name, old_version, result.version, result.url
-    );
-}
-
-fn get_release_info(
-    client: &Client,
-    repo_type: RepoType,
-    project: String,
-    auth: Option<bool>,
-) -> Result<ReleaseInfo, Error> {
-    let (url, headers) = match repo_type {
-        RepoType::GitHub => {
-            let url = format!(
-                "{}/{}/{}",
-                GITHUB_BASE_API_URL, project, GITHUB_LATEST_RELEASE_ENDPOINT
-            );
-            let headers = construct_headers();
-            (url, headers)
-        }
-        RepoType::GitLab => {
-            let project_api_url = format!("{}/{}/{}", GITLAB_BASE_URL, "api/v4/projects", project);
-            let url = format!("{}/{}", project_api_url, GITLAB_LATEST_RELEASE_ENDPOINT);
-            let mut headers = construct_headers();
-            if auth.is_some() == true {
-                let gitlab_header = String::from("PRIVATE-TOKEN");
-                let gitlab_header = gitlab_header.as_str();
-                let gitlab_token = env::var("GITLAB_TOKEN")
-                .expect(format!("Expected an environment variable with name GITLAB_TOKEN to access private Gitlab project with id {}.", project).as_str());
-                headers.insert(
-                    HeaderName::from_bytes(gitlab_header.as_bytes()).unwrap(),
-                    format!("{}", gitlab_token)
-                        .try_into()
-                        .expect("invalid characters"),
-                );
-            };
-            (url, headers)
-        }
-    };
-
-    let res = match client.get(url).headers(headers).send() {
-        Ok(res) => res,
-        Err(e) => return Err(Error::HttpReqwestError(e.to_string())),
-    };
-
-    let status = res.status().as_u16();
-    match status {
-        status if (200..300).contains(&status) => {
-            let res_text = res.text().unwrap();
-            // serialize
-            match repo_type {
-                RepoType::GitLab => {
-                    let result: GitLabReleaseInfo = match serde_json::from_str(res_text.as_str()) {
-                        Ok(value) => value,
-                        Err(e) => return Err(Error::SerializeError(e.to_string())),
-                    };
-                    let rl = ReleaseInfo {
-                        version: result.tag_name,
-                        url: result.links.url,
-                    };
-                    Ok(rl)
-                }
-                RepoType::GitHub => {
-                    let result: GitHubReleaseInfo = match serde_json::from_str(res_text.as_str()) {
-                        Ok(value) => value,
-                        Err(e) => return Err(Error::SerializeError(e.to_string())),
-                    };
-                    let rl = ReleaseInfo {
-                        version: result.name,
-                        url: result.html_url,
-                    };
-                    Ok(rl)
-                }
-            }
-        }
-        status if (400..500).contains(&status) => Err(Error::HttpClientError(format!(
-            "{:?}",
-            res.error_for_status_ref()
-        ))),
-        status if (500..600).contains(&status) => Err(Error::HttpServerError(format!(
-            "{:?}",
-            res.error_for_status_ref()
-        ))),
-        _ => Err(Error::HttpReqwestError(format!("{}", res.status()))),
+    // Output results in requested format
+    match args.format {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&output)?),
+        OutputFormat::Yaml => println!("{}", serde_yaml::to_string(&output)?),
     }
-}
 
-fn construct_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "Accept",
-        HeaderValue::from_static("application/vnd.github+json"),
-    );
-    headers.insert(USER_AGENT, HeaderValue::from_static("reqwest"));
-    headers
-}
-
-fn main() {
-    let http_client = Client::new();
-    let version_file_name = env::var("VERSION_FILE")
-        .expect("Expected an environment variable with name VERSION_FILE to update version.");
-    let version_file = VersionFileUpdater::new(version_file_name);
-    let repos = version_file.update_versions(&http_client);
-    version_file.update_file(repos);
+    Ok(())
 }
