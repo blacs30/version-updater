@@ -231,14 +231,26 @@ async fn check_manifest(client: &Client, manifest_url: &str, token: Option<&str>
 
         match response.status() {
             StatusCode::OK => {
-                info!("Successfully found manifest with format: {}", accept);
+                info!(
+                    "Successfully found manifest at {} with accept header: {}",
+                    manifest_url, accept
+                );
                 return Ok(true);
             }
             StatusCode::NOT_FOUND => {
                 if let Ok(error_body) = response.text().await {
-                    warn!("Manifest not found with format: {}", accept);
+                    let is_last_header = accept == accept_headers[accept_headers.len() - 1];
+                    warn!(
+                        "Manifest not found with accept header: {}{}",
+                        accept,
+                        if !is_last_header {
+                            ". Trying next accept header"
+                        } else {
+                            ""
+                        }
+                    );
                     debug!(
-                        "Got 404 with for format {} with error body: {}",
+                        "Got 404 with for accept header {} with error body: {}",
                         accept, error_body
                     );
                     if error_body.contains("OCI index found")
@@ -253,7 +265,11 @@ async fn check_manifest(client: &Client, manifest_url: &str, token: Option<&str>
                 }
             }
             StatusCode::TOO_MANY_REQUESTS => {
-                error!("Rate limit hit for: {}", manifest_url);
+                let error_body = response.text().await?;
+                error!(
+                    "Rate limit hit for: {}. Error: {}",
+                    manifest_url, error_body
+                );
                 return Ok(false);
             }
             status => {
@@ -286,7 +302,6 @@ async fn get_registry_token(
 ) -> Result<Option<String>> {
     // Skip authentication for quay.io
     if registry.contains("quay.io") {
-        info!("quay.io doesn't need API keys to access the API at the moment.");
         return Ok(None);
     } else {
         info!("Getting registry token for {}", registry);
@@ -394,7 +409,7 @@ async fn get_github_version(
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
     debug!("Github query url {}", url);
     let mut request = client.get(url).header(USER_AGENT, USER_AGENT_NAME);
-    trace!("Request for repo {}is {:?}", repo, request);
+    trace!("Request for repo {} is {:?}", repo, request);
 
     if let Some(token) = token {
         request = request.header(AUTHORIZATION, format!("Bearer {}", token));
@@ -403,10 +418,13 @@ async fn get_github_version(
     let response = request.send().await?;
     trace!("Response for repo {}is {:?}", repo, response);
 
-    if response.status() == StatusCode::TOO_MANY_REQUESTS {
+    if response.status() == StatusCode::TOO_MANY_REQUESTS
+        || response.status() == StatusCode::FORBIDDEN
+    {
+        let error_body = response.text().await?;
         error!(
-            "Rate limit exceeded for Github API when querying repo {}",
-            repo
+            "Rate limit exceeded for Github API when querying repo {}. Error: {}",
+            repo, error_body
         );
         return Ok("<RATE_LIMITED>".to_string());
     }
@@ -459,9 +477,10 @@ async fn get_gitlab_version(
     let response = request.send().await?;
     trace!("Response for repo {}is {:?}", repo, response);
     if response.status() == StatusCode::TOO_MANY_REQUESTS {
+        let error_body = response.text().await?;
         error!(
-            "Rate limit exceeded for Gitlab API when querying repo {}",
-            repo
+            "Rate limit exceeded for Gitlab API when querying repo {}. Error: {}",
+            repo, error_body
         );
         return Ok("<RATE_LIMITED>".to_string());
     }
@@ -632,7 +651,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 "Error: Image {}:{} does not exist in the registry",
                 &service_config.image.name, &image_tag
             );
-            image_tag = "<NOT_FOUND>".to_string();
+            image_tag = match version.as_str() {
+                "<RATE_LIMITED>" => "<RATE_LIMITED>".to_string(),
+                _ => "<NOT_FOUND>".to_string(),
+            };
         };
 
         // Add to output

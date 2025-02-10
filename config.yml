@@ -1,18 +1,47 @@
-nextcloud:
+# nextcloud:
+#   git:
+#     repo: nextcloud/server
+#     type: github
+#     version_filter: v(.+)
+#   image:
+#     name: registry.gitlab.com/lisowski-development/docker-images/nextcloud
+#     tag: ${RELEASE_VERSION}-apache
+# ejabberd:
+#   git:
+#     repo: processone/ejabberd
+#     type: github
+#     version_filter: (.+)
+#   image:
+#     name: registry.gitlab.com/lisowski-development/docker-images/ejabberd
+#     tag: ${RELEASE_VERSION}
+comentario3:
   git:
-    repo: nextcloud/server
-    type: github
-    version_filter: v(.+)
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
   image:
-    name: registry.gitlab.com/lisowski-development/docker-images/nextcloud
-    tag: ${RELEASE_VERSION}-apache
-ejabberd:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+
+comentario2:
   git:
-    repo: processone/ejabberd
-    type: github
-    version_filter: (.+)
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
   image:
-    name: registry.gitlab.com/lisowski-development/docker-images/ejabberd
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+
+comentario1:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
     tag: ${RELEASE_VERSION}
 comentario:
   git:
@@ -23,27 +52,141 @@ comentario:
   image:
     name: registry.gitlab.com/comentario/comentario
     tag: ${RELEASE_VERSION}
-wallabag:
+comentario3:
   git:
-    repo: wallabag/wallabag
-    type: github
-    version_filter: (.+)
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
   image:
-    name: wallabag/wallabag
+    name: registry.gitlab.com/comentario/comentario
     tag: ${RELEASE_VERSION}
-postgres-exporter:
+
+comentario2:
   git:
-    repo: prometheus-community/postgres_exporter
-    type: github
-    version_filter: (.+)
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
   image:
-    name: quay.io/prometheuscommunity/postgres-exporter
+    name: registry.gitlab.com/comentario/comentario
     tag: ${RELEASE_VERSION}
-piler:
+
+comentario1:
   git:
-    repo: jsuto/piler
-    type: github
-    version_filter: piler-(.+)
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
   image:
-    name: sutoj/piler
+    name: registry.gitlab.com/comentario/comentario
     tag: ${RELEASE_VERSION}
+comentario:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+comentario3:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+
+comentario2:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+
+comentario1:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+comentario:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+comentario3:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+
+comentario2:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+
+comentario1:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+comentario:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+# wallabag:
+#   git:
+#     repo: wallabag/wallabag
+#     type: github
+#     version_filter: (.+)
+#   image:
+#     name: wallabag/wallabag
+#     tag: ${RELEASE_VERSION}
+# postgres-exporter:
+#   git:
+#     repo: prometheus-community/postgres_exporter
+#     type: github
+#     version_filter: (.+)
+#   image:
+#     name: quay.io/prometheuscommunity/postgres-exporter
+#     tag: ${RELEASE_VERSION}
+# piler:
+#   git:
+#     repo: jsuto/piler
+#     type: github
+#     version_filter: piler-(.+)
+#   image:
+#     name: sutoj/piler
+#     tag: ${RELEASE_VERSION}
