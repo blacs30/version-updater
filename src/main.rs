@@ -13,7 +13,6 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io::Write;
-use tokio;
 
 const USER_AGENT_NAME: &str = "version-updater";
 const DEFAULT_VERSION_FILTER: &str = "(.*)";
@@ -192,10 +191,8 @@ fn get_docker_credentials(registry: &str) -> Option<(String, String)> {
     // If we have a base64-encoded auth string, decode it
     if let Some(auth_str) = &auth.auth {
         info!("Found docker credentials base64 encoded for {}", registry);
-        let decoded = String::from_utf8(STANDARD.decode(&auth_str).ok()?).ok()?;
-        let mut parts = decoded.splitn(2, ':');
-        let username = parts.next()?;
-        let password = parts.next()?;
+        let decoded = String::from_utf8(STANDARD.decode(auth_str).ok()?).ok()?;
+        let (username, password) = decoded.split_once(':')?;
         return Some((username.to_string(), password.to_string()));
     }
 
@@ -372,7 +369,6 @@ pub async fn image_exists(image_name: &str, tag: &str, registry: &str) -> Result
         "Checking if image exists: {}:{} in registry {}",
         image_name, tag, registry
     );
-    let registry = registry;
     let client = Client::new();
     let creds = get_docker_credentials(registry);
     trace!("Creds for registry {} are {:#?}", registry, creds);
@@ -422,7 +418,7 @@ async fn get_github_version(
     let tag_name = data["tag_name"].as_str().unwrap_or("");
     trace!("Tag for repo {}is {:?}", repo, tag_name);
 
-    let version_pattern = format!("{}", filter); // Just use the filter directly
+    let version_pattern = filter.to_string();
     let re = Regex::new(&version_pattern).unwrap();
     let version = re
         .captures(tag_name)
@@ -457,7 +453,7 @@ async fn get_gitlab_version(
     trace!("Request for repo {}is {:?}", repo, request);
 
     if let Some(token) = token {
-        request = request.header("PRIVATE-TOKEN", format!("{}", token));
+        request = request.header("PRIVATE-TOKEN", token.to_string());
     }
 
     let response = request.send().await?;
@@ -476,7 +472,7 @@ async fn get_gitlab_version(
     let tag_name = data["tag_name"].as_str().unwrap_or("");
     trace!("Tag for repo {}is {:?}", repo, tag_name);
 
-    let version_pattern = format!("{}", filter); // Just use the filter directly
+    let version_pattern = filter.to_string();
     let re = Regex::new(&version_pattern).unwrap();
     let version = re
         .captures(tag_name)
@@ -502,7 +498,7 @@ fn extract_registry(full_image_name: &str) -> ImageParts {
 
     if let Some(captures) = re.captures(full_image_name) {
         // First capture group is registry, second is the rest of the path
-        let registry = Some(captures.get(1).map(|m| m.as_str().to_string()).unwrap()).unwrap();
+        let registry = captures.get(1).map(|m| m.as_str().to_string()).unwrap();
         let mut image_path = captures.get(2).map(|m| m.as_str().to_string()).unwrap();
         // Add library/ prefix if image_path doesn't contain a slash
         if !image_path.contains('/') {
@@ -537,7 +533,7 @@ struct ImageParts {
     image_path: String,
 }
 
-fn init_loggin() -> () {
+fn init_loggin() {
     Builder::new()
         .format(|buf, record| {
             writeln!(
