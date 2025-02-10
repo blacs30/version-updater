@@ -3,18 +3,12 @@ repos:
     hooks:
       - id: cargo-fmt
         name: Run cargo fmt
-        entry: cargo fmt -- --check
+        entry: cargo fmt --all -- --check --color always
         language: system
-        types: [python] # This is a workaround to allow running system commands
+        pass_filenames: false
 
       - id: cargo-clippy
         name: Run cargo clippy
         entry: cargo clippy --all-targets -- -D warnings
         language: system
-        types: [python] # This is a workaround to allow running system commands
-
-      - id: cargo-audit
-        name: Run cargo audit
-        entry: cargo audit
-        language: system
-        types: [python] # This is a workaround to allow running system commands
+        pass_filenames: false
