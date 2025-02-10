@@ -1,0 +1,19 @@
+versions:
+  nextcloud:
+    container_image: registry.gitlab.com/lisowski-development/docker-images/nextcloud
+    image_tag: 30.0.5-apache
+  comentario:
+    container_image: registry.gitlab.com/comentario/comentario
+    image_tag: v3.12.0
+  postgres-exporter:
+    container_image: quay.io/prometheuscommunity/postgres-exporter
+    image_tag: v0.16.0
+  piler:
+    container_image: sutoj/piler
+    image_tag: 1.4.7
+  wallabag:
+    container_image: wallabag/wallabag
+    image_tag: 2.6.10
+  ejabberd:
+    container_image: registry.gitlab.com/lisowski-development/docker-images/ejabberd
+    image_tag: '24.12'

@@ -1,0 +1,49 @@
+nextcloud:
+  git:
+    repo: nextcloud/server
+    type: github
+    version_filter: v(.+)
+  image:
+    name: registry.gitlab.com/lisowski-development/docker-images/nextcloud
+    tag: ${RELEASE_VERSION}-apache
+ejabberd:
+  git:
+    repo: processone/ejabberd
+    type: github
+    version_filter: (.+)
+  image:
+    name: registry.gitlab.com/lisowski-development/docker-images/ejabberd
+    tag: ${RELEASE_VERSION}
+comentario:
+  git:
+    repo: comentario/comentario
+    project_id: 42486427
+    type: gitlab
+    version_filter: (v.+)
+  image:
+    name: registry.gitlab.com/comentario/comentario
+    tag: ${RELEASE_VERSION}
+wallabag:
+  git:
+    repo: wallabag/wallabag
+    type: github
+    version_filter: (.+)
+  image:
+    name: wallabag/wallabag
+    tag: ${RELEASE_VERSION}
+postgres-exporter:
+  git:
+    repo: prometheus-community/postgres_exporter
+    type: github
+    version_filter: (.+)
+  image:
+    name: quay.io/prometheuscommunity/postgres-exporter
+    tag: ${RELEASE_VERSION}
+piler:
+  git:
+    repo: jsuto/piler
+    type: github
+    version_filter: piler-(.+)
+  image:
+    name: sutoj/piler
+    tag: ${RELEASE_VERSION}
