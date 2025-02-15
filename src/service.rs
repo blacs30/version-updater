@@ -1,4 +1,4 @@
-use super::config::{ServiceConfig, ServiceInfo};
+use super::config::{ServiceConfig, ServiceVersion};
 use super::git::GitClient;
 use super::registry::RegistryClient;
 use log::error;
@@ -14,30 +14,29 @@ impl ServiceProcessor {
         Self { config }
     }
 
-    pub async fn process(&self) -> Result<ServiceInfo> {
+    pub async fn process(&self) -> Result<ServiceVersion> {
         let version = match self.get_version().await {
             Ok(v) => v,
             Err(e) => {
-                return Ok(ServiceInfo::error(
+                return Ok(ServiceVersion::error(
                     self.config.image.name.clone(),
                     &format!("Failed to get version: {}", e),
                 ));
             }
         };
-
-        let image_tag = match self.validate_image_tag(&version).await {
+        let tag = match self.validate_image_tag(&version).await {
             Ok(tag) => tag,
             Err(e) => {
-                return Ok(ServiceInfo::error(
+                return Ok(ServiceVersion::error(
                     self.config.image.name.clone(),
                     &format!("Failed to validate image tag: {}", e),
                 ));
             }
         };
 
-        Ok(ServiceInfo {
-            container_image: self.config.image.name.clone(),
-            image_tag,
+        Ok(ServiceVersion {
+            image: self.config.image.name.clone(),
+            tag,
             error: None,
         })
     }

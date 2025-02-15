@@ -1,15 +1,9 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum VersionError {
-    #[error("Rate limited: {0}")]
-    RateLimited(String),
+pub enum AppError {
     #[error("Not found: {0}")]
     NotFound(String),
-}
-
-#[derive(Debug, Error)]
-pub enum ConfigError {
     #[error("Failed to read config file: {0}")]
     FileRead(#[from] std::io::Error),
     #[error("Failed to parse config file: {0}")]
@@ -20,10 +14,6 @@ pub enum ConfigError {
     MissingGithubToken,
     #[error("Missing GitLab token for private repository")]
     MissingGitlabToken,
-}
-
-#[derive(Debug, Error)]
-pub enum RegistryError {
     #[error("Failed to read Docker credentials: {0}")]
     CredentialsError(String),
 
@@ -33,7 +23,7 @@ pub enum RegistryError {
     #[error("Registry request failed: {0}")]
     RequestError(String),
 
-    #[error("Rate limited by registry: {0}")]
+    #[error("Rate limited: {0}")]
     RateLimited(String),
 
     #[error("Image not found: {0}")]

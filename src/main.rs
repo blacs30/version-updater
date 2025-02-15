@@ -6,7 +6,8 @@ mod registry;
 mod service;
 
 use anyhow::Result;
-use config::{AppConfig, Args, OutputData, OutputFormat, ServiceConfig, ServiceInfo};
+use config::{AppConfig, Args, OutputData, OutputFormat, ServiceVersion};
+use futures::future::join_all;
 use log::{error, info, warn};
 use logging::init_logging;
 use service::ServiceProcessor;
@@ -22,7 +23,6 @@ async fn main() -> Result<()> {
 
     // Optionally, you could check if any services failed
     let failed_services: Vec<_> = output
-        .versions
         .iter()
         .filter(|(_, info)| info.error.is_some())
         .collect();
@@ -54,31 +54,41 @@ fn write_output(output: &OutputData, args: &Args) -> Result<()> {
 async fn process_services(config: &AppConfig) -> Result<OutputData> {
     let mut output = OutputData::new();
 
-    for (name, service_config) in &config.services {
-        match process_single_service(service_config).await {
+    // Create a vector of futures for all service processing tasks
+    let processing_tasks: Vec<_> = config
+        .services
+        .iter()
+        .map(|(name, service_config)| {
+            let name = name.clone();
+            let processor = ServiceProcessor::new(service_config.clone());
+            async move {
+                let result = processor.process().await;
+                (name, result)
+            }
+        })
+        .collect();
+
+    // Execute all tasks concurrently
+    let results = join_all(processing_tasks).await;
+
+    // Process results
+    for (name, result) in results {
+        match result {
             Ok(service_info) => {
-                output.add_service(name.clone(), service_info);
+                output.insert(name, service_info);
             }
             Err(e) => {
-                // Log the error but continue processing other services
                 error!("Failed to process service '{}': {}", name, e);
-                // Add an error entry for this service
-                output.add_service(
+                output.insert(
                     name.clone(),
-                    ServiceInfo {
-                        container_image: service_config.image.name.clone(),
-                        image_tag: format!("<ERROR: {}>", e),
-                        error: None,
-                    },
+                    ServiceVersion::error(
+                        config.services[&name].image.name.clone(),
+                        &format!("Processing failed: {}", e),
+                    ),
                 );
             }
         }
     }
 
     Ok(output)
-}
-
-async fn process_single_service(service_config: &ServiceConfig) -> Result<ServiceInfo> {
-    let processor = ServiceProcessor::new(service_config.clone());
-    processor.process().await
 }

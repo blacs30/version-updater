@@ -132,7 +132,7 @@ The generated output is designed to be easily consumed by other infrastructure t
 
 #### Terraform Example
 
-````hcl
+```hcl
 locals {
   versions = jsondecode(file("versions.json"))
 }
@@ -144,6 +144,7 @@ resource "nomad_job" "my_service" {
     tag   = "${local.versions.my-service.tag}"
   })
 }
+```
 
 ## Error Handling
 
@@ -162,7 +163,7 @@ Building:
 
 ```bash
 cargo build --release
-````
+```
 
 Testing:
 

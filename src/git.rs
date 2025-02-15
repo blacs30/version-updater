@@ -1,4 +1,4 @@
-use super::error::{ConfigError, VersionError};
+use super::error::AppError;
 use anyhow::Result;
 use log::{debug, error, info, trace};
 use regex::Regex;
@@ -17,7 +17,7 @@ fn default_version_filter() -> String {
 pub struct GitClient;
 
 impl GitClient {
-    pub async fn get_version(config: &Config) -> Result<String> {
+    pub async fn get_version(config: &GitConfig) -> Result<String> {
         match config.git_type {
             Provider::Github => {
                 Self::get_version_from_api(
@@ -73,7 +73,7 @@ impl GitClient {
             || response.status() == StatusCode::FORBIDDEN
         {
             error!("{}: Failed to get version: Rate limited", api_type);
-            return Err(VersionError::RateLimited(format!("{} API", api_type)).into());
+            return Err(AppError::RateLimited(format!("{} API", api_type)).into());
         }
 
         let body = response.text().await?;
@@ -88,7 +88,7 @@ impl GitClient {
     }
 }
 
-impl fmt::Display for Config {
+impl fmt::Display for GitConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.project_id {
             Some(id) => write!(f, "{}", id),
@@ -98,7 +98,7 @@ impl fmt::Display for Config {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Config {
+pub struct GitConfig {
     pub repo: String,
     #[serde(rename = "type")]
     pub git_type: Provider,
@@ -112,28 +112,28 @@ pub struct Config {
     pub global_github_auth: bool,
 }
 
-impl Config {
+impl GitConfig {
     // Add a method to set the global authentication
     pub fn with_global_github_auth(mut self, auth: bool) -> Self {
         self.global_github_auth = auth;
         self
     }
     // Validation method
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate(&self) -> Result<(), AppError> {
         if self.git_type == Provider::Gitlab && self.project_id.is_none() {
-            return Err(ConfigError::MissingGitlabProjectId);
+            return Err(AppError::MissingGitlabProjectId);
         }
 
         if self.private || (self.git_type == Provider::Github && self.global_github_auth) {
             match self.git_type {
                 Provider::Github => {
                     if env::var("GITHUB_TOKEN").is_err() {
-                        return Err(ConfigError::MissingGithubToken);
+                        return Err(AppError::MissingGithubToken);
                     }
                 }
                 Provider::Gitlab => {
                     if env::var("GITLAB_TOKEN").is_err() {
-                        return Err(ConfigError::MissingGitlabToken);
+                        return Err(AppError::MissingGitlabToken);
                     }
                 }
                 Provider::None => {}
@@ -193,7 +193,7 @@ fn extract_version(tag_name: &str, filter: &str, api_type: ApiType<'_>) -> Resul
 
     if version.is_empty() {
         error!("No matching version for {}", api_type);
-        return Err(VersionError::NotFound(format!("No matching version for {}", api_type)).into());
+        return Err(AppError::NotFound(format!("No matching version for {}", api_type)).into());
     }
     Ok(version)
 }

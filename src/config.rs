@@ -1,5 +1,5 @@
-use super::error::ConfigError;
-use super::git::Config as GitConfig;
+use super::error::AppError;
+use super::git::GitConfig;
 use super::registry::ImageConfig;
 
 use anyhow::Result;
@@ -16,7 +16,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn load_config() -> Result<Self, ConfigError> {
+    pub fn load_config() -> Result<Self, AppError> {
         // Parse command line arguments
         let args = Args::parse();
         info!("Reading config file: {}", args.config);
@@ -40,23 +40,23 @@ impl AppConfig {
                 Ok(()) => {
                     updated_services.insert(name.clone(), service.clone());
                 }
-                Err(ConfigError::MissingGitlabProjectId) => {
+                Err(AppError::MissingGitlabProjectId) => {
                     error!("Service '{}' is missing GitLab project ID", name);
-                    return Err(ConfigError::MissingGitlabProjectId);
+                    return Err(AppError::MissingGitlabProjectId);
                 }
-                Err(ConfigError::MissingGithubToken) => {
+                Err(AppError::MissingGithubToken) => {
                     error!(
                         "Service '{}' requires GitHub token for authentication",
                         name
                     );
-                    return Err(ConfigError::MissingGithubToken);
+                    return Err(AppError::MissingGithubToken);
                 }
-                Err(ConfigError::MissingGitlabToken) => {
+                Err(AppError::MissingGitlabToken) => {
                     error!(
                         "Service '{}' requires GitLab token for authentication",
                         name
                     );
-                    return Err(ConfigError::MissingGitlabToken);
+                    return Err(AppError::MissingGitlabToken);
                 }
                 Err(e) => {
                     error!("Invalid configuration for service '{}': {}", name, e);
@@ -88,21 +88,23 @@ pub struct Args {
     pub output: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(transparent)]
-pub struct OutputData {
-    pub versions: BTreeMap<String, ServiceInfo>,
+#[derive(Serialize)]
+pub struct ServiceVersion {
+    pub image: String,
+    pub tag: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
-impl OutputData {
-    pub fn new() -> Self {
+pub type OutputData = BTreeMap<String, ServiceVersion>;
+
+impl ServiceVersion {
+    pub fn error(image: String, error: &str) -> Self {
         Self {
-            versions: BTreeMap::new(),
+            image,
+            tag: "<ERROR>".to_string(),
+            error: Some(error.to_string()),
         }
-    }
-    // Optional: Add a convenience method to add services
-    pub fn add_service(&mut self, name: String, info: ServiceInfo) {
-        self.versions.insert(name, info);
     }
 }
 
@@ -112,16 +114,6 @@ pub struct ServiceInfo {
     pub image_tag: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-impl ServiceInfo {
-    pub fn error(image: String, error: &str) -> Self {
-        Self {
-            container_image: image,
-            image_tag: "<ERROR>".to_string(),
-            error: Some(error.to_string()),
-        }
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
