@@ -18,8 +18,11 @@ This is particularly useful for:
 
 ## Installation
 
+1. Clone the git repo.
+1. Compile and install it locally:
+
 ```bash
-cargo install version-updater
+cargo install --path .
 ```
 
 ## Usage
