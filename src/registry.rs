@@ -1,6 +1,7 @@
-use anyhow::{anyhow, Result};
+use super::error::RegistryError;
+use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use log::{debug, error, info, trace, warn};
+use log::{debug, info, trace, warn};
 use regex::Regex;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,7 @@ enum RegistryAuth {
         service: String,
     },
 }
+
 impl RegistryAuth {
     fn from_registry(registry: &str) -> Self {
         match registry {
@@ -90,12 +92,15 @@ impl RegistryClient {
         }
     }
 
-    pub async fn validate_tag(&self, tag: &str) -> Result<bool> {
+    pub async fn validate_tag(&self, tag: &str) -> Result<bool, RegistryError> {
         info!("Validating tag '{}' for image '{}'", tag, self.image_path);
 
-        let creds = get_docker_credentials(&self.registry);
-        let token =
-            get_registry_token(&self.client, &self.registry, &self.image_path, creds).await?;
+        let creds = get_docker_credentials(&self.registry)
+            .map_err(|e| RegistryError::CredentialsError(e.to_string()))?;
+
+        let token = get_registry_token(&self.client, &self.registry, &self.image_path, creds)
+            .await
+            .map_err(|e| RegistryError::AuthenticationError(e.to_string()))?;
 
         let manifest_url = format!(
             "https://{}/v2/{}/manifests/{}",
@@ -106,41 +111,50 @@ impl RegistryClient {
     }
 }
 
-pub fn get_docker_credentials(registry: &str) -> Option<(String, String)> {
-    info!("Gettinig docker credentials for {}", registry);
-    let config_path = dirs::home_dir()?.join(".docker/config.json");
+pub fn get_docker_credentials(registry: &str) -> Result<Option<(String, String)>, RegistryError> {
+    info!("Getting docker credentials for {}", registry);
+    let config_path = dirs::home_dir().ok_or_else(|| {
+        RegistryError::CredentialsError("Could not determine home directory".to_string())
+    })?;
+    let config_path = config_path.join(".docker/config.json");
+
     trace!("Trying to read docker credentials from ~/.docker/config.json");
-    let config_contents = fs::read_to_string(config_path).ok()?;
-    let config: DockerConfig = serde_json::from_str(&config_contents).ok()?;
+    let config_contents = fs::read_to_string(config_path).map_err(|e| {
+        RegistryError::CredentialsError(format!("Failed to read docker config: {}", e))
+    })?;
 
-    let auth = config.auths.get(registry)?;
+    let config: DockerConfig = serde_json::from_str(&config_contents).map_err(|e| {
+        RegistryError::CredentialsError(format!("Failed to parse docker config: {}", e))
+    })?;
 
-    // If we have a base64-encoded auth string, decode it
-    if let Some(auth_str) = &auth.auth {
-        info!("Found docker credentials base64 encoded for {}", registry);
-        let decoded = String::from_utf8(STANDARD.decode(auth_str).ok()?).ok()?;
-        let (username, password) = decoded.split_once(':')?;
-        return Some((username.to_string(), password.to_string()));
+    if let Some(auth) = config.auths.get(registry) {
+        // Try to get credentials from base64-encoded auth string
+        if let Some(auth_str) = &auth.auth {
+            let decoded = STANDARD.decode(auth_str).map_err(|e| {
+                RegistryError::CredentialsError(format!("Failed to decode auth string: {}", e))
+            })?;
+            let decoded = String::from_utf8(decoded).map_err(|e| {
+                RegistryError::CredentialsError(format!("Invalid UTF-8 in auth string: {}", e))
+            })?;
+            if let Some((username, password)) = decoded.split_once(':') {
+                return Ok(Some((username.to_string(), password.to_string())));
+            }
+        }
+
+        // If no auth string, try explicit username/password
+        if let (Some(username), Some(password)) = (&auth.username, &auth.password) {
+            return Ok(Some((username.clone(), password.clone())));
+        }
     }
 
-    // Otherwise try to use explicit username/password
-    if let (Some(username), Some(password)) = (&auth.username, &auth.password) {
-        info!(
-            "Found docker credentials username/password for {}",
-            registry
-        );
-        return Some((username.clone(), password.clone()));
-    }
-
-    info!("No docker credentials found for {}", registry);
-    None
+    Ok(None)
 }
 
 pub async fn check_manifest(
     client: &Client,
     manifest_url: &str,
     token: Option<&str>,
-) -> Result<bool> {
+) -> Result<bool, RegistryError> {
     info!("Getting image manifest at URL: {}", manifest_url);
     let accept_headers = [
         "application/vnd.docker.distribution.manifest.v2+json",
@@ -158,7 +172,9 @@ pub async fn check_manifest(
             request = request.header("Authorization", format!("Bearer {}", token));
         }
 
-        let response = request.send().await?;
+        let response = request.send().await.map_err(|e| {
+            RegistryError::RequestError(format!("Failed to send manifest request: {}", e))
+        })?;
 
         match response.status() {
             StatusCode::OK => {
@@ -196,33 +212,25 @@ pub async fn check_manifest(
                 }
             }
             StatusCode::TOO_MANY_REQUESTS => {
-                let error_body = response.text().await?;
-                error!(
-                    "Rate limit hit for: {}. Error: {}",
-                    manifest_url, error_body
-                );
-                return Ok(false);
+                let error_body = response.text().await.map_err(|e| {
+                    RegistryError::RequestError(format!("Failed to read response body: {}", e))
+                })?;
+                return Err(RegistryError::RateLimited(error_body));
             }
             status => {
-                warn!("Unexpected status code: {} when checking manifest", status);
-                if let Ok(error_body) = response.text().await {
-                    return Err(anyhow!(
-                        "Unexpected status code: {} with body: {}",
-                        status,
-                        error_body
-                    ));
-                } else {
-                    return Err(anyhow!("Unexpected status code: {}", status));
-                }
+                let error_body = response.text().await.unwrap_or_default();
+                return Err(RegistryError::RequestError(format!(
+                    "Unexpected status code: {} with body: {}",
+                    status, error_body
+                )));
             }
         }
     }
 
-    error!(
-        "No manifest found or no accept header was correct for URL {}",
+    Err(RegistryError::ImageNotFound(format!(
+        "No manifest found for {}",
         manifest_url
-    );
-    Ok(false)
+    )))
 }
 
 pub async fn get_registry_token(
@@ -230,76 +238,95 @@ pub async fn get_registry_token(
     registry: &str,
     image_name: &str,
     creds: Option<(String, String)>,
-) -> Result<Option<String>> {
-    // Skip authentication for quay.io
+) -> Result<Option<String>, RegistryError> {
     if registry.contains("quay.io") {
         return Ok(None);
-    } else {
-        info!("Getting registry token for {}", registry);
     }
 
+    info!("Getting registry token for {}", registry);
+
     let auth = RegistryAuth::from_registry(registry);
-
-    // Get token based on registry type
     let token = match auth {
-        RegistryAuth::DockerHub { auth_url, service } => {
-            let token_url = format!(
-                "{}?service={}&scope=repository:{}:pull",
-                auth_url, service, image_name
-            );
-            trace!("Registry token_url is {}", token_url);
-
-            let mut token_request = client.get(&token_url);
-            if let Some((username, password)) = creds {
-                token_request = token_request.basic_auth(username, Some(password));
-            }
-
-            let response = token_request.send().await?;
-            let body = response.text().await?;
-            let token_resp: TokenResponse = serde_json::from_str(&body)?;
-            Some(token_resp.token)
-        }
         RegistryAuth::GitLab {
             auth_url,
             service,
             client_id,
-        } => {
-            let token_url = format!(
-                "{}?client_id={}&service={}&scope=repository:{}:pull",
-                auth_url, client_id, service, image_name
-            );
-
-            let mut token_request = client.get(&token_url);
-            if let Some((username, password)) = &creds {
-                token_request = token_request.basic_auth(username, Some(password));
-            }
-
-            let response = token_request.send().await?;
-            let body = response.text().await?;
-            let token_resp: TokenResponse = serde_json::from_str(&body)?;
-            Some(token_resp.token)
-        }
-        RegistryAuth::Generic { auth_url, service }
-        | RegistryAuth::GitHub { auth_url, service } => {
-            let token_url = format!(
-                "{}?service={}&scope=repository:{}:pull",
-                auth_url, service, image_name
-            );
-
-            let mut token_request = client.get(&token_url);
-            if let Some((username, password)) = creds {
-                token_request = token_request.basic_auth(username, Some(password));
-            }
-
-            let response = token_request.send().await?;
-            let body = response.text().await?;
-            let token_resp: TokenResponse = serde_json::from_str(&body)?;
-            Some(token_resp.token)
+        } => get_gitlab_token(client, &auth_url, &service, &client_id, image_name, creds).await?,
+        // Combined arm for DockerHub, GitHub, and Generic registries
+        RegistryAuth::DockerHub { auth_url, service }
+        | RegistryAuth::GitHub { auth_url, service }
+        | RegistryAuth::Generic { auth_url, service } => {
+            get_token(client, &auth_url, &service, image_name, creds).await?
         }
     };
 
-    info!("Received registry token for {}", registry);
-    Ok(token)
+    Ok(Some(token))
+}
+
+async fn get_token(
+    client: &Client,
+    auth_url: &str,
+    service: &str,
+    image_name: &str,
+    creds: Option<(String, String)>,
+) -> Result<String, RegistryError> {
+    let token_url = format!(
+        "{}?service={}&scope=repository:{}:pull",
+        auth_url, service, image_name
+    );
+
+    let mut token_request = client.get(&token_url);
+    if let Some((username, password)) = creds {
+        token_request = token_request.basic_auth(username, Some(password));
+    }
+
+    let response = token_request.send().await.map_err(|e| {
+        RegistryError::AuthenticationError(format!("Failed to send token request: {}", e))
+    })?;
+
+    let body = response.text().await.map_err(|e| {
+        RegistryError::AuthenticationError(format!("Failed to read token response: {}", e))
+    })?;
+
+    let token_resp: TokenResponse = serde_json::from_str(&body).map_err(|e| {
+        RegistryError::InvalidResponse(format!("Failed to parse token response: {}", e))
+    })?;
+
+    Ok(token_resp.token)
+}
+
+// Helper function for GitLab specific token retrieval
+async fn get_gitlab_token(
+    client: &Client,
+    auth_url: &str,
+    service: &str,
+    client_id: &str,
+    image_name: &str,
+    creds: Option<(String, String)>,
+) -> Result<String, RegistryError> {
+    let token_url = format!(
+        "{}?client_id={}&service={}&scope=repository:{}:pull",
+        auth_url, client_id, service, image_name
+    );
+
+    let mut token_request = client.get(&token_url);
+    if let Some((username, password)) = creds {
+        token_request = token_request.basic_auth(username, Some(password));
+    }
+
+    let response = token_request.send().await.map_err(|e| {
+        RegistryError::AuthenticationError(format!("Failed to send GitLab token request: {}", e))
+    })?;
+
+    let body = response.text().await.map_err(|e| {
+        RegistryError::AuthenticationError(format!("Failed to read GitLab token response: {}", e))
+    })?;
+
+    let token_resp: TokenResponse = serde_json::from_str(&body).map_err(|e| {
+        RegistryError::InvalidResponse(format!("Failed to parse GitLab token response: {}", e))
+    })?;
+
+    Ok(token_resp.token)
 }
 
 fn extract_registry(full_image_name: &str) -> ImageParts {

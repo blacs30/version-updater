@@ -7,15 +7,11 @@ use anyhow::Result;
 
 pub struct ServiceProcessor {
     config: ServiceConfig,
-    git_client: GitClient,
 }
 
 impl ServiceProcessor {
     pub fn new(config: ServiceConfig) -> Self {
-        Self {
-            config,
-            git_client: GitClient::new(),
-        }
+        Self { config }
     }
 
     pub async fn process(&self) -> Result<ServiceInfo> {
@@ -47,7 +43,7 @@ impl ServiceProcessor {
     }
 
     async fn get_version(&self) -> Result<String> {
-        self.git_client.get_version(&self.config.git).await
+        GitClient::get_version(&self.config.git).await
     }
 
     async fn validate_image_tag(&self, version: &str) -> Result<String> {

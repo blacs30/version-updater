@@ -1,18 +1,44 @@
-use std::fmt;
+use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum VersionError {
+    #[error("Rate limited: {0}")]
     RateLimited(String),
+    #[error("Not found: {0}")]
     NotFound(String),
 }
 
-impl fmt::Display for VersionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RateLimited(msg) => write!(f, "Rate limited: {}", msg),
-            Self::NotFound(msg) => write!(f, "Not found: {}", msg),
-        }
-    }
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("Failed to read config file: {0}")]
+    FileRead(#[from] std::io::Error),
+    #[error("Failed to parse config file: {0}")]
+    ParseYaml(#[from] serde_yaml::Error),
+    #[error("Missing project ID for GitLab repository")]
+    MissingGitlabProjectId,
+    #[error("Missing GitHub token for private repository or global auth")]
+    MissingGithubToken,
+    #[error("Missing GitLab token for private repository")]
+    MissingGitlabToken,
 }
 
-impl std::error::Error for VersionError {}
+#[derive(Debug, Error)]
+pub enum RegistryError {
+    #[error("Failed to read Docker credentials: {0}")]
+    CredentialsError(String),
+
+    #[error("Registry authentication failed: {0}")]
+    AuthenticationError(String),
+
+    #[error("Registry request failed: {0}")]
+    RequestError(String),
+
+    #[error("Rate limited by registry: {0}")]
+    RateLimited(String),
+
+    #[error("Image not found: {0}")]
+    ImageNotFound(String),
+
+    #[error("Invalid registry response: {0}")]
+    InvalidResponse(String),
+}

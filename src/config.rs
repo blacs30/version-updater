@@ -1,7 +1,8 @@
+use super::error::ConfigError;
 use super::git::Config as GitConfig;
 use super::registry::ImageConfig;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
@@ -15,46 +16,58 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn load_config() -> Result<Self> {
+    pub fn load_config() -> Result<Self, ConfigError> {
         // Parse command line arguments
         let args = Args::parse();
-
         info!("Reading config file: {}", args.config);
 
         // Read and parse the config file
-        let config_content = fs::read_to_string(&args.config)
-            .map_err(|e| anyhow!("Failed to read config file: {}", e))?;
-
+        let config_content = fs::read_to_string(&args.config)?;
         debug!("Config content read");
 
         // Parse YAML into Config struct
-        let mut config: Config = serde_yaml::from_str(&config_content)
-            .map_err(|e| anyhow!("Failed to parse config file: {}", e))?;
-
+        let mut config: Config = serde_yaml::from_str(&config_content)?;
         trace!("Config content is {}", config_content);
 
         // Create a new HashMap to store the updated services
         let mut updated_services = HashMap::new();
 
-        // Update each service's git config with global github auth
         for (name, service) in config.services.iter_mut() {
-            // Set the global github auth value
             service.git = <GitConfig as Clone>::clone(&service.git)
                 .with_global_github_auth(config.global.git.github.authenticate);
 
-            // Validate the configuration
-            if let Err(e) = service.git.validate() {
-                error!("Invalid configuration for service '{}': {}", name, e);
-                return Err(anyhow!("Invalid git configuration: {}", e));
+            match service.git.validate() {
+                Ok(()) => {
+                    updated_services.insert(name.clone(), service.clone());
+                }
+                Err(ConfigError::MissingGitlabProjectId) => {
+                    error!("Service '{}' is missing GitLab project ID", name);
+                    return Err(ConfigError::MissingGitlabProjectId);
+                }
+                Err(ConfigError::MissingGithubToken) => {
+                    error!(
+                        "Service '{}' requires GitHub token for authentication",
+                        name
+                    );
+                    return Err(ConfigError::MissingGithubToken);
+                }
+                Err(ConfigError::MissingGitlabToken) => {
+                    error!(
+                        "Service '{}' requires GitLab token for authentication",
+                        name
+                    );
+                    return Err(ConfigError::MissingGitlabToken);
+                }
+                Err(e) => {
+                    error!("Invalid configuration for service '{}': {}", name, e);
+                    return Err(e);
+                }
             }
-
-            updated_services.insert(name, service);
         }
 
-        // Combine into AppConfig
         Ok(Self {
             args,
-            services: config.services,
+            services: updated_services,
         })
     }
 }
