@@ -1,8 +1,11 @@
+use crate::git::USER_AGENT_NAME;
+
 use super::error::AppError;
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use log::{debug, info, trace, warn};
 use regex::Regex;
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -154,7 +157,10 @@ pub async fn check_manifest(
     for accept in accept_headers {
         debug!("Trying manifest format: {}", accept);
 
-        let mut request = client.get(manifest_url).header("Accept", accept);
+        let mut request = client
+            .get(manifest_url)
+            .header("Accept", accept)
+            .header(USER_AGENT, USER_AGENT_NAME);
 
         // Only add authorization header if token is present
         if let Some(token) = token {
@@ -262,10 +268,32 @@ async fn get_token(
         token_url.push_str(&format!("&client_id={}", client_id));
     }
 
-    let mut token_request = client.get(&token_url);
-    if let Some((username, password)) = creds {
+    trace!("token url: {}", token_url);
+    let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_NAME));
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+
+    let mut token_request = client.get(&token_url).headers(headers);
+
+    // Handle authentication
+    if service == "ghcr.io" {
+        // Try GITHUB_TOKEN first
+        if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
+            token_request = token_request.header(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {}", github_token))
+                    .map_err(|e| AppError::AuthenticationError(e.to_string()))?,
+            );
+        } else if let Some((username, password)) = creds {
+            // Fall back to basic auth only if GITHUB_TOKEN is not present
+            token_request = token_request.basic_auth(username, Some(password));
+        }
+    } else if let Some((username, password)) = creds {
+        // For non-ghcr.io services, use basic auth if credentials are available
         token_request = token_request.basic_auth(username, Some(password));
     }
+    trace!("token request client is: {:?}", token_request);
 
     let response = token_request.send().await.map_err(|e| {
         AppError::AuthenticationError(format!("Failed to send token request: {}", e))
@@ -275,6 +303,12 @@ async fn get_token(
         AppError::AuthenticationError(format!("Failed to read token response: {}", e))
     })?;
 
+    trace!(
+        "token response for service {} with token_url {}: {}",
+        service,
+        token_url,
+        body
+    );
     let token_resp: TokenResponse = serde_json::from_str(&body)
         .map_err(|e| AppError::InvalidResponse(format!("Failed to parse token response: {}", e)))?;
 
