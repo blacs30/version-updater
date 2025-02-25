@@ -14,6 +14,8 @@ pub enum AppError {
     MissingGithubToken,
     #[error("Missing GitLab token for private repository")]
     MissingGitlabToken,
+    #[error("Missing Codeberg token for private repository")]
+    MissingCodebergToken,
     #[error("Failed to read Docker credentials: {0}")]
     CredentialsError(String),
 

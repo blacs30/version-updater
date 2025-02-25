@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fmt;
 
-const USER_AGENT_NAME: &str = "version-updater";
+pub const USER_AGENT_NAME: &str = "version-updater";
 const DEFAULT_VERSION_FILTER: &str = "(.*)";
 
 fn default_version_filter() -> String {
@@ -19,6 +19,18 @@ pub struct GitClient;
 impl GitClient {
     pub async fn get_version(config: &GitConfig) -> Result<String> {
         match config.git_type {
+            Provider::Codeberg => {
+                Self::get_version_from_api(
+                    ApiType::Codeberg { repo: &config.repo },
+                    if config.private || config.global_github_auth {
+                        env::var("CODEBERG_TOKEN").ok()
+                    } else {
+                        None
+                    },
+                    &config.filter,
+                )
+                .await
+            }
             Provider::Github => {
                 Self::get_version_from_api(
                     ApiType::Github { repo: &config.repo },
@@ -136,6 +148,11 @@ impl GitConfig {
                         return Err(AppError::MissingGitlabToken);
                     }
                 }
+                Provider::Codeberg => {
+                    if env::var("CODEBERG_TOKEN").is_err() {
+                        return Err(AppError::MissingCodebergToken);
+                    }
+                }
                 Provider::None => {}
             }
         }
@@ -148,17 +165,23 @@ impl GitConfig {
 pub enum Provider {
     Github,
     Gitlab,
+    Codeberg,
     None,
 }
 
 enum ApiType<'a> {
     Github { repo: &'a str },
+    Codeberg { repo: &'a str },
     Gitlab { project_id: u64 },
 }
 
 impl ApiType<'_> {
     fn get_request_details(&self, token: Option<String>) -> (String, Option<(String, String)>) {
         match self {
+            ApiType::Codeberg { repo } => (
+                format!("https://codeberg.org/api/v1/repos/{}/releases/latest", repo),
+                token.map(|t| ("Authorization".to_string(), format!("Bearer {}", t))),
+            ),
             ApiType::Github { repo } => (
                 format!("https://api.github.com/repos/{}/releases/latest", repo),
                 token.map(|t| ("Authorization".to_string(), format!("Bearer {}", t))),
@@ -178,6 +201,7 @@ impl fmt::Display for ApiType<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ApiType::Github { repo } => write!(f, "GitHub({})", repo),
+            ApiType::Codeberg { repo } => write!(f, "Codeberg({})", repo),
             ApiType::Gitlab { project_id } => write!(f, "GitLab({})", project_id),
         }
     }
