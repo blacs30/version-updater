@@ -6,7 +6,7 @@ A service that automatically checks and validates the latest versions for exista
 
 Version Updater helps you keep track of Docker image versions that correspond to Git repository releases. It:
 
-- Fetches the latest release versions from GitHub or GitLab repositories
+- Fetches the latest release versions from GitHub, Codeberg or GitLab repositories
 - Validates if corresponding Docker images exist in container registries
 - Outputs the results in JSON or YAML format
 
@@ -68,6 +68,7 @@ version-updater -c config.yaml -o output.json
 
 - `GITHUB_TOKEN`: Required for private GitHub repositories or when `github.authenticate` is true
 - `GITLAB_TOKEN`: Required for private GitLab repositories
+- `CODEBERG_TOKEN`: Required for private Codeberg repositories
 - `RUST_LOG`: Controls log level (error, warn, info, debug, trace)
 
 ### Command Line Options
@@ -80,6 +81,7 @@ version-updater -c config.yaml -o output.json
 
 ### Git Providers
 
+- Codeberg
 - GitHub
 - GitLab
 
@@ -89,6 +91,7 @@ version-updater -c config.yaml -o output.json
 - GitHub Container Registry (ghcr.io)
 - GitLab Container Registry
 - Quay.io
+- Codeberg
 
 ## How It Works
 
